@@ -85,15 +85,18 @@ RCT_NOT_IMPLEMENTED(- (instancetype)init);
 {
   RCT_PROFILE_BEGIN_EVENT(RCTProfileTagAlways, @"[RCTModuleData setUpInstanceAndBridge] [_instanceLock lock]", @{ @"moduleClass": NSStringFromClass(_moduleClass) });
   {
-    std::unique_lock<std::mutex> lock(_instanceLock);
-
     if (!_setupComplete && _bridge.valid) {
       if (!_instance) {
         if (RCT_DEBUG && _requiresMainQueueSetup) {
           RCTAssertMainQueue();
         }
         RCT_PROFILE_BEGIN_EVENT(RCTProfileTagAlways, @"[RCTModuleData setUpInstanceAndBridge] [_moduleClass new]",  @{ @"moduleClass": NSStringFromClass(_moduleClass) });
-        _instance = [_moduleClass new];
+        {
+          std::unique_lock<std::mutex> lock(_instanceLock);
+          if (!_instance) {
+            _instance = [_moduleClass new];
+          }
+        }
         RCT_PROFILE_END_EVENT(RCTProfileTagAlways, @"");
         if (!_instance) {
           // Module init returned nil, probably because automatic instantatiation
@@ -143,13 +146,19 @@ RCT_NOT_IMPLEMENTED(- (instancetype)init);
 {
   if ([_instance respondsToSelector:@selector(bridge)] && _instance.bridge != _bridge) {
     RCT_PROFILE_BEGIN_EVENT(RCTProfileTagAlways, @"[RCTModuleData setBridgeForInstance]", nil);
-    @try {
-      [(id)_instance setValue:_bridge forKey:@"bridge"];
-    }
-    @catch (NSException *exception) {
-      RCTLogError(@"%@ has no setter or ivar for its bridge, which is not "
-                  "permitted. You must either @synthesize the bridge property, "
-                  "or provide your own setter method.", self.name);
+    {
+      std::unique_lock<std::mutex> lock(_instanceLock);
+      
+      if ([_instance respondsToSelector:@selector(bridge)] && _instance.bridge != _bridge) {
+        @try {
+          [(id)_instance setValue:_bridge forKey:@"bridge"];
+        }
+        @catch (NSException *exception) {
+          RCTLogError(@"%@ has no setter or ivar for its bridge, which is not "
+                      "permitted. You must either @synthesize the bridge property, "
+                      "or provide your own setter method.", self.name);
+        }
+      }
     }
     RCT_PROFILE_END_EVENT(RCTProfileTagAlways, @"");
   }
@@ -183,15 +192,21 @@ RCT_NOT_IMPLEMENTED(- (instancetype)init);
 
       // assign it to the module
       if (implementsMethodQueue) {
-        @try {
-          [(id)_instance setValue:_methodQueue forKey:@"methodQueue"];
-        }
-        @catch (NSException *exception) {
-          RCTLogError(@"%@ is returning nil for its methodQueue, which is not "
-                      "permitted. You must either return a pre-initialized "
-                      "queue, or @synthesize the methodQueue to let the bridge "
-                      "create a queue for you.", self.name);
-        }
+        {
+          std::unique_lock<std::mutex> lock(_instanceLock);
+
+          if ([_instance respondsToSelector:@selector(methodQueue)] && !_instance.methodQueue) {
+            @try {
+              [(id)_instance setValue:_methodQueue forKey:@"methodQueue"];
+            }
+            @catch (NSException *exception) {
+              RCTLogError(@"%@ is returning nil for its methodQueue, which is not "
+                          "permitted. You must either return a pre-initialized "
+                          "queue, or @synthesize the methodQueue to let the bridge "
+                          "create a queue for you.", self.name);
+            }
+          }
+        }        
       }
     }
     RCT_PROFILE_END_EVENT(RCTProfileTagAlways, @"");
